@@ -125,7 +125,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/is5233-final/is5233-app/task-manager@sha256:2d9fde4306be79f1deb55f67c73b12afd9dfbe4d353d26f5b13587d4c6283dff
+          image: us-central1-docker.pkg.dev/is5233-final/is5233-app/task-manager@sha256:40f784c29897cc9d51e4c871f86ecbccb5e1b7946e3c74b5ef19020a7b6f4253
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
