@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: task-manager-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/JSW10888/IS5233final.git
+    targetRevision: HEAD
+    path: .
+    directory:
+      recurse: false
+      include: kubernetes-dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: task-dev
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Task Manager</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f6fb;
+      color: #17233b;
+      max-width: 700px;
+      margin: 60px auto;
+      padding: 0 20px;
+    }
+
+    main {
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px #17233b12;
+    }
+
+    form, li {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid #8490a3;
+      border-radius: 6px;
+    }
+
+    button {
+      cursor: pointer;
+      padding: 10px 14px;
+      border: 0;
+      border-radius: 6px;
+      background: #2457c5;
+      color: white;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    ul { list-style: none; padding: 0; }
+
+    li {
+      padding: 16px 0;
+      border-bottom: 1px solid #e1e6ef;
+    }
+
+    .title { flex: 1; overflow-wrap: anywhere; }
+    .completed { text-decoration: line-through; color: #586579; }
+    .delete { background: #ad263b; }
+    #message { min-height: 24px; }
+    .error { color: #ad263b; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Task Manager</h1>
+    <p>Create tasks and track your progress.</p>
+
+    <form id="task-form">
+      <label for="title">New task</label>
+      <input
+        id="title"
+        type="text"
+        placeholder="What needs to get done?"
+        maxlength="200"
+        required
+      >
+      <button id="add-button" type="submit">Add task</button>
+    </form>
+
+    <p id="message" role="status" aria-live="polite"></p>
+    <ul id="task-list"></ul>
+  </main>
+
+  <script>
+    const form = document.querySelector("#task-form");
+    const titleInput = document.querySelector("#title");
+    const taskList = document.querySelector("#task-list");
+    const message = document.querySelector("#message");
+    const addButton = document.querySelector("#add-button");
+
+    function showMessage(text, isError = false) {
+      message.textContent = text;
+      message.className = isError ? "error" : "";
+    }
+
+    async function request(path, options = {}) {
+      const response = await fetch(path, options);
+
+      if (!response.ok) {
+        throw new Error(
+          `Request failed (${response.status}). Check the API and database.`
+        );
+      }
+
+      if (response.status === 204) return null;
+      return response.json();
+    }
+
+    async function loadTasks() {
+      const tasks = await request("/tasks");
+      taskList.replaceChildren();
+
+      for (const task of tasks) {
+        const item = document.createElement("li");
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = task.completed;
+        checkbox.setAttribute("aria-label", `Complete ${task.title}`);
+
+        const title = document.createElement("span");
+        title.textContent = task.title;
+        title.className = task.completed ? "title completed" : "title";
+
+        checkbox.addEventListener("change", async () => {
+          checkbox.disabled = true;
+
+          try {
+            await request(`/tasks/${encodeURIComponent(task.id)}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title: task.title,
+                completed: checkbox.checked
+              })
+            });
+          } catch (error) {
+            checkbox.checked = task.completed;
+            checkbox.disabled = false;
+            showMessage(error.message, true);
+            return;
+          }
+
+          await refresh("Task updated.");
+        });
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.textContent = "Delete";
+        deleteButton.className = "delete";
+        deleteButton.setAttribute("aria-label", `Delete ${task.title}`);
+
+        deleteButton.addEventListener("click", async () => {
+          deleteButton.disabled = true;
+
+          try {
+            await request(`/tasks/${encodeURIComponent(task.id)}`, {
+              method: "DELETE"
+            });
+          } catch (error) {
+            deleteButton.disabled = false;
+            showMessage(error.message, true);
+            return;
+          }
+
+          await refresh("Task deleted.");
+        });
+
+        item.append(checkbox, title, deleteButton);
+        taskList.append(item);
+      }
+
+      return tasks.length;
+    }
+
+    async function refresh(successMessage = "") {
+      try {
+        const count = await loadTasks();
+        showMessage(
+          successMessage || (count ? "" : "No tasks yet. Add your first task.")
+        );
+      } catch (error) {
+        showMessage(error.message + " Refresh the page to retry.", true);
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const title = titleInput.value.trim();
+
+      if (!title) {
+        showMessage("Enter a task title.", true);
+        return;
+      }
+
+      addButton.disabled = true;
+
+      try {
+        await request("/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title })
+        });
+
+        titleInput.value = "";
+        await refresh("Task added.");
+      } catch (error) {
+        showMessage(error.message, true);
+      } finally {
+        addButton.disabled = false;
+      }
+    });
+
+    refresh();
+  </script>
+</body>
+</html>

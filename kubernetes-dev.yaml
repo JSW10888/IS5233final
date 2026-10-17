@@ -106,7 +106,7 @@ metadata:
   name: task-api
   namespace: task-dev
 spec:
-  replicas: 1
+  replicas: 
   selector:
     matchLabels:
       app: task-api
