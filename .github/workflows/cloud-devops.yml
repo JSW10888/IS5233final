@@ -95,6 +95,60 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+      - name: Pull exact published digest for scanning
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_REF: us-central1-docker.pkg.dev/is5233-final/is5233-app/task-manager@${{ steps.image.outputs.digest }}
+        run: docker pull "$IMAGE_REF"
+      - name: Scan published image with Grype
+        if: github.event_name != 'pull_request'
+        uses: anchore/scan-action@f6601287cdb1efc985d6b765bbf99cb4c0ac29d8 # v7.0.0
+        with:
+          image: us-central1-docker.pkg.dev/is5233-final/is5233-app/task-manager@${{ steps.image.outputs.digest }}
+          output-format: json
+          output-file: vulnerability-report.json
+          fail-build: false
+          only-fixed: false
+      - name: Retain full release vulnerability report
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-vulnerability-report
+          path: vulnerability-report.json
+          if-no-files-found: error
+      - name: Block unsafe promotion
+        if: github.event_name != 'pull_request'
+        run: |
+          python - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          report = json.loads(Path('vulnerability-report.json').read_text())
+          if not isinstance(report.get('matches'), list) or not isinstance(report.get('source'), dict):
+              raise SystemExit('Invalid scanner report; refusing promotion.')
+          counts = Counter()
+          blocked = []
+          review = []
+          for match in report['matches']:
+              vulnerability = match['vulnerability']
+              severity = vulnerability['severity'].lower()
+              fixed_versions = (vulnerability.get('fix') or {}).get('versions') or []
+              counts[severity] += 1
+              finding = f"{vulnerability['id']} / {match['artifact']['name']} / {severity} / fixes={fixed_versions}"
+              if severity == 'critical' or (severity == 'high' and fixed_versions):
+                  blocked.append(finding)
+              elif severity == 'high':
+                  review.append(finding)
+          print('All-match counts:', dict(counts))
+          for finding in review:
+              print('MANUAL RISK REVIEW - unfixed high:', finding)
+          for finding in blocked:
+              print('BLOCKED:', finding)
+          if blocked:
+              raise SystemExit('Promotion blocked: critical or fixable high vulnerabilities detected.')
+          print('Security gate passed. Review remaining findings; this is not proof of a vulnerability-free image.')
+          PY
       - name: Save deployment image reference
         if: github.event_name != 'pull_request'
         env:
@@ -147,7 +201,7 @@ jobs:
           commit-message: Promote tested application image to dev
           title: Promote tested application image to dev
           body: |
-            Updates the dev deployment to the immutable image digest built after passing API and PostgreSQL tests.
+            Updates dev to the immutable image digest built after passing API/PostgreSQL tests and the release vulnerability gate. Review the complete scan artifact and any unfixed high findings before merging.
             Review and merge to trigger Argo CD synchronization. Confirm the registry pull credential is current before promotion.
           delete-branch: true
 
