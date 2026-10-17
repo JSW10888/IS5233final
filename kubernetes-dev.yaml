@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: task-dev
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-init
+  namespace: task-dev
+data:
+  001_create_tasks.sql: |
+    CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        title VARCHAR(200) NOT NULL,
+        completed BOOLEAN NOT NULL DEFAULT FALSE,
+        CONSTRAINT task_title_not_empty CHECK (length(trim(title)) > 0)
+    );
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: task-db-data
+  namespace: task-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  namespace: task-dev
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: task-database
+  template:
+    metadata:
+      labels:
+        app: task-database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: taskdb
+            - name: POSTGRES_USER
+              value: taskadmin
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: task-db
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "taskadmin", "-d", "taskdb"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: task-db-data
+        - name: init
+          configMap:
+            name: database-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database
+  namespace: task-dev
+spec:
+  selector:
+    app: task-database
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-api
+  namespace: task-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: task-api
+  template:
+    metadata:
+      labels:
+        app: task-api
+    spec:
+      imagePullSecrets:
+        - name: registry-auth
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: us-central1-docker.pkg.dev/is5233-final/is5233-app/task-manager@sha256:2d9fde4306be79f1deb55f67c73b12afd9dfbe4d353d26f5b13587d4c6283dff
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: DB_HOST
+              value: database
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: taskdb
+            - name: DB_USER
+              value: taskadmin
+            - name: TASK_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: task-db
+                  key: password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: task-api
+  namespace: task-dev
+spec:
+  selector:
+    app: task-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+
